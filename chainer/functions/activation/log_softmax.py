@@ -1,5 +1,6 @@
 import numpy
 
+import chainer
 from chainer import cuda
 from chainer import function
 from chainer.utils import type_check
@@ -7,7 +8,6 @@ from chainer.utils import type_check
 if cuda.cudnn_enabled:
     cudnn = cuda.cudnn
     libcudnn = cudnn.cudnn
-    _cudnn_version = libcudnn.getVersion()
     _algorithm = libcudnn.CUDNN_SOFTMAX_LOG
     _mode = libcudnn.CUDNN_SOFTMAX_MODE_CHANNEL
 
@@ -23,10 +23,10 @@ def logsumexp(x):
     return m
 
 
-def _log_softmax(x, use_cudnn):
-    if cuda.cudnn_enabled and use_cudnn and _cudnn_version >= 3000:
+def _log_softmax(x):
+    if chainer.should_use_cudnn('>=auto', 3000):
         xp = cuda.get_array_module(x)
-        if xp != numpy:
+        if xp is not numpy:
             oz_dtype = 'd' if x.dtype == 'd' else 'f'
             one = numpy.array(1, dtype=oz_dtype).ctypes
             zero = numpy.array(0, dtype=oz_dtype).ctypes
@@ -48,8 +48,7 @@ class LogSoftmax(function.Function):
 
     """Log-softmax activation function."""
 
-    def __init__(self, use_cudnn=True):
-        self.use_cudnn = use_cudnn
+    def __init__(self):
         self.y = None
 
     def check_type_forward(self, in_types):
@@ -62,13 +61,12 @@ class LogSoftmax(function.Function):
         )
 
     def forward(self, xs):
-        self.y = _log_softmax(xs[0], self.use_cudnn)
+        self.y = _log_softmax(xs[0])
         return self.y,
 
     def backward(self, x, gy):
         xp = cuda.get_array_module(*x)
-        if (xp != numpy and cuda.cudnn_enabled and self.use_cudnn and
-                _cudnn_version >= 3000):
+        if xp is not numpy and chainer.should_use_cudnn('>=auto', 3000):
             oz_dtype = 'd' if x[0].dtype == 'd' else 'f'
             one = numpy.array(1, dtype=oz_dtype).ctypes
             zero = numpy.array(0, dtype=oz_dtype).ctypes
@@ -86,18 +84,16 @@ class LogSoftmax(function.Function):
         return gx,
 
 
-def log_softmax(x, use_cudnn=True):
-    """Channelwise log-softmax function.
+def log_softmax(x):
+    """Channel-wise log-softmax function.
 
-    This function computes its logarithm of softmax along the second axis. Let
-    :math:`x = (x_1, x_2, \\dots, x_d)^{\\top}` be the d dimensional index
-    array and :math:`f(x_1, \\dots, x_d)` be the corresponding input array.
-    For each index :math:`x` in the input array, it computes the logarithm
-    of the probability :math:`\log p(x)` defined as
+    This function computes its logarithm of softmax along the second axis.
+    Let :math:`c = (c_1, c_2, \\dots, c_D)` be the slice of ``x`` along with
+    the second axis. For each slice :math:`c`, it computes the logarithm of
+    the function :math:`f(c)` defined as
 
     .. math::
-        p(x) = {\\exp(f(x_1, x_2, \\dots, x_d))
-                \\over \\sum_{x'_2} \\exp(f(x_1, x'_2, \\dots, x_d))}.
+        f(c) = {\\exp(c) \\over \\sum_{d} \\exp(c_d)}.
 
     This method is theoretically equivalent to ``log(softmax(x))`` but is more
     stable.
@@ -108,15 +104,29 @@ def log_softmax(x, use_cudnn=True):
         ``log_softmax`` method is more stable.
 
     Args:
-        x (~chainer.Variable): Input variable.
-        use_cudnn (bool): If ``True``, cuDNN is enabled and cuDNN ver. 3 or
-            later is used, then this function uses cuDNN as the core
-            implementation.
+        x (:class:`~chainer.Variable` or :class:`numpy.ndarray` or \
+        :class:`cupy.ndarray`):
+            Input variable.
+            A :math:`n`-dimensional (:math:`n \\geq 2`) float array.
 
     Returns:
         ~chainer.Variable: Output variable.
+        A :math:`n`-dimensional (:math:`n \\geq 2`) float array, which is the
+        same shape with x.
 
     .. seealso:: :func:`~chainer.functions.softmax`
 
+    .. admonition:: Example
+
+        >>> x = np.array([[0, 1, 2], [0, 2, 4]], 'f')
+        >>> x
+        array([[ 0.,  1.,  2.],
+               [ 0.,  2.,  4.]], dtype=float32)
+        >>> F.log_softmax(x).data
+        array([[-2.40760589, -1.40760589, -0.40760589],
+               [-4.14293146, -2.14293146, -0.14293146]], dtype=float32)
+        >>> np.allclose(F.log_softmax(x).data, F.log(F.softmax(x)).data)
+        True
+
     """
-    return LogSoftmax(use_cudnn)(x)
+    return LogSoftmax()(x)

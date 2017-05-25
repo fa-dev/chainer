@@ -12,7 +12,7 @@ except ImportError as e:
 
 from chainer.dataset.convert import concat_examples
 from chainer.dataset import download
-from chainer import flag
+from chainer import function
 from chainer.functions.activation.relu import relu
 from chainer.functions.activation.softmax import softmax
 from chainer.functions.array.reshape import reshape
@@ -25,13 +25,14 @@ from chainer import link
 from chainer.links.connection.convolution_2d import Convolution2D
 from chainer.links.connection.linear import Linear
 from chainer.serializers import npz
+from chainer.utils import argument
 from chainer.utils import imgproc
 from chainer.variable import Variable
 
 
 class VGG16Layers(link.Chain):
 
-    """A pre-trained CNN model with 16 layers provided by VGG team [1].
+    """A pre-trained CNN model with 16 layers provided by VGG team.
 
     During initialization, this chain model automatically downloads
     the pre-trained caffemodel, convert to another chainer model,
@@ -46,8 +47,8 @@ class VGG16Layers(link.Chain):
     model that can be specified in the constructor,
     please use ``convert_caffemodel_to_npz`` classmethod instead.
 
-    .. [1] K. Simonyan and A. Zisserman, `Very Deep Convolutional Networks
-        for Large-Scale Image Recognition <https://arxiv.org/abs/1409.1556>`_
+    See: K. Simonyan and A. Zisserman, `Very Deep Convolutional Networks
+    for Large-Scale Image Recognition <https://arxiv.org/abs/1409.1556>`_
 
     Args:
         pretrained_model (str): the destination of the pre-trained
@@ -154,13 +155,20 @@ class VGG16Layers(link.Chain):
         caffemodel = CaffeFunction(path_caffemodel)
         npz.save_npz(path_npz, caffemodel, compression=False)
 
-    def __call__(self, x, layers=['prob'], test=True):
-        """Computes all the feature maps specified by ``layers``.
+    def __call__(self, x, layers=['prob'], **kwargs):
+        """__call__(self, x, layers=['prob'])
+
+        Computes all the feature maps specified by ``layers``.
+
+        .. warning::
+
+           ``test`` argument is not supported anymore since v2.
+           Instead, use ``chainer.using_config('train', train)``.
+           See :func:`chainer.using_config`.
 
         Args:
             x (~chainer.Variable): Input variable.
             layers (list of str): The list of layer names you want to extract.
-            test (bool): If ``True``, dropout runs in test mode.
 
         Returns:
             Dictionary of ~chainer.Variable: A directory in which
@@ -168,6 +176,11 @@ class VGG16Layers(link.Chain):
             the corresponding feature map variable.
 
         """
+
+        argument.check_unexpected_kwargs(
+            kwargs, test='test argument is not supported anymore. '
+            'Use chainer.using_config')
+        argument.assert_kwargs_empty(kwargs)
 
         h = x
         activations = {}
@@ -176,24 +189,31 @@ class VGG16Layers(link.Chain):
             if len(target_layers) == 0:
                 break
             for func in funcs:
-                if func is dropout:
-                    h = func(h, train=not test)
-                else:
-                    h = func(h)
+                h = func(h)
             if key in target_layers:
                 activations[key] = h
                 target_layers.remove(key)
         return activations
 
-    def extract(self, images, layers=['fc7'], size=(224, 224),
-                test=True, volatile=flag.OFF):
-        """Extracts all the feature maps of given images.
+    def extract(self, images, layers=['fc7'], size=(224, 224), **kwargs):
+        """extract(self, images, layers=['fc7'], size=(224, 224))
+
+        Extracts all the feature maps of given images.
 
         The difference of directly executing ``__call__`` is that
         it directly accepts images as an input and automatically
         transforms them to a proper variable. That is,
         it is also interpreted as a shortcut method that implicitly calls
         ``prepare`` and ``__call__`` functions.
+
+        .. warning::
+
+           ``test`` and ``volatile`` arguments are not supported anymore since
+           v2.
+           Instead, use ``chainer.using_config('train', train)`` and
+           ``chainer.using_config('enable_backprop', not volatile)``
+           respectively.
+           See :func:`chainer.using_config`.
 
         Args:
             images (iterable of PIL.Image or numpy.ndarray): Input images.
@@ -202,8 +222,6 @@ class VGG16Layers(link.Chain):
                 an input of CNN. All the given images are not resized
                 if this argument is ``None``, but the resolutions of
                 all the images should be the same.
-            test (bool): If ``True``, dropout runs in test mode.
-            volatile (~chainer.Flag): Volatility flag used for input variables.
 
         Returns:
             Dictionary of ~chainer.Variable: A directory in which
@@ -212,9 +230,16 @@ class VGG16Layers(link.Chain):
 
         """
 
+        argument.check_unexpected_kwargs(
+            kwargs, test='test argument is not supported anymore. '
+            'Use chainer.using_config',
+            volatile='volatile argument is not supported anymore. '
+            'Use chainer.using_config')
+        argument.assert_kwargs_empty(kwargs)
+
         x = concat_examples([prepare(img, size=size) for img in images])
-        x = Variable(self.xp.asarray(x), volatile=volatile)
-        return self(x, layers=layers, test=test)
+        x = Variable(self.xp.asarray(x))
+        return self(x, layers=layers)
 
     def predict(self, images, oversample=True):
         """Computes all the probabilities of given images.
@@ -236,14 +261,15 @@ class VGG16Layers(link.Chain):
             x = imgproc.oversample(x, crop_dims=(224, 224))
         else:
             x = x[:, :, 16:240, 16:240]
-        # Set volatile option to ON to reduce memory consumption
-        x = Variable(self.xp.asarray(x), volatile=flag.ON)
-        y = self(x, layers=['prob'])['prob']
-        if oversample:
-            n = y.data.shape[0] // 10
-            y_shape = y.data.shape[1:]
-            y = reshape(y, (n, 10) + y_shape)
-            y = sum(y, axis=1) / 10
+        # Use no_backprop_mode to reduce memory consumption
+        with function.no_backprop_mode():
+            x = Variable(self.xp.asarray(x))
+            y = self(x, layers=['prob'])['prob']
+            if oversample:
+                n = y.data.shape[0] // 10
+                y_shape = y.data.shape[1:]
+                y = reshape(y, (n, 10) + y_shape)
+                y = sum(y, axis=1) / 10
         return y
 
 

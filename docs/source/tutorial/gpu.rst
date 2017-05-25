@@ -23,10 +23,11 @@ Relationship between Chainer and CuPy
 
 .. note::
 
-   As of the release of v1.3.0, Chainer changes its GPU backend from `PyCUDA <http://mathema.tician.de/software/pycuda/>`_ to CuPy.
-   CuPy covers all features of PyCUDA used by Chainer, though their interfaces are not compatible.
+   From v2.0.0, CuPy is turned into a separate package and repository.
+   Even if you have CUDA installed in your environment, you have to install CuPy separately to use GPUs.
+   See :ref:`install_cuda` for the way to set up CUDA support.
 
-Chainer uses :ref:`CuPy <cupy_reference>` as its backend for GPU computation.
+Chainer uses `CuPy <http://docs.cupy.chainer.org/>`_ as its backend for GPU computation.
 In particular, the :class:`cupy.ndarray` class is the GPU array implementation for Chainer.
 CuPy supports a subset of features of NumPy with a compatible interface.
 It enables us to write a common code for CPU and GPU.
@@ -106,21 +107,25 @@ It is equivalent to the following code using CuPy:
    If user uses only one device, these device switching is not needed.
    :func:`chainer.cuda.to_cpu` and :func:`chainer.cuda.to_gpu` functions automatically switch the current device correctly.
 
-Chainer also provides a convenient function :func:`chainer.cuda.get_device` to select a device.
-It accepts an integer, CuPy array, NumPy array, or None (indicating the current device), and returns an appropriate device object.
-If the argument is a NumPy array, then *a dummy device object* is returned.
-The dummy device object supports *with* statements like above which does nothing.
-Here are some examples:
+Chainer also provides a convenient function :func:`chainer.cuda.get_device_from_id` and :func:`chainer.cuda.get_device_from_array` to select a device.
+The former function accepts an integer or ``None``.
+When ``None`` is given, it returns *a dummy device object*.
+Otherwise, it returns a corresponding device object.
+The latter function accepts CuPy array or NumPy array.
+When a NumPy array is given, it returns *a dummy device object*.
+Otherwise, it returns a corresponding device object to the give CuPy array.
+The dummy device object also supports *with* statements like the above example but does nothing.
+Here are some other examples:
 
 .. testcode::
 
-   cuda.get_device(1).use()
+   cuda.get_device_from_id(1).use()
    x_gpu1 = cupy.empty((4, 3), dtype='f')  # 'f' indicates float32
 
-   with cuda.get_device(1):
-       x_gpu1 = cuda.empty((4, 3), dtype='f')
+   with cuda.get_device_from_id(1):
+       x_gpu1 = cupy.empty((4, 3), dtype='f')
 
-   with cuda.get_device(x_gpu1):
+   with cuda.get_device_from_array(x_gpu1):
        y_gpu1 = x_gpu + 1
 
 Since it accepts NumPy arrays, we can write a function that accepts both NumPy and CuPy arrays with correct device switching:
@@ -128,7 +133,7 @@ Since it accepts NumPy arrays, we can write a function that accepts both NumPy a
 .. testcode::
 
    def add1(x):
-       with cuda.get_device(x):
+       with cuda.get_device_from_array(x):
            return x + 1
 
 The compatibility of CuPy with NumPy enables us to write CPU/GPU generic code.
